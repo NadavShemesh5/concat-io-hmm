@@ -6,22 +6,6 @@
 namespace py = pybind11;
 using ssize_t = Py_ssize_t;
 
-py::array_t<double> log(
-  py::array_t<double, py::array::c_style | py::array::forcecast> x_)
-{
-  auto n = x_.size();
-  auto ptr = x_.data();
-  auto log = py::array_t<double>{{n}};
-  auto log_ptr = log.mutable_data();
-  for (auto i = 0; i < n; ++i) {
-    *(log_ptr++) = std::log(*(ptr++));
-  }
-  if (std::fetestexcept(FE_DIVBYZERO)) {
-    std::feclearexcept(FE_DIVBYZERO);  // log(0) = -inf, ignore exception.
-  }
-  return log.reshape(std::vector<ssize_t>(x_.shape(), x_.shape() + x_.ndim()));
-}
-
 std::tuple<double, py::array_t<double>, py::array_t<double>> forward(
   py::array_t<double> startprob_,
   py::array_t<double> transmat_,
@@ -147,57 +131,10 @@ py::array_t<double> compute_xi_sum(
   return xi_sum_;
 }
 
-std::tuple<double, py::array_t<ssize_t>> viterbi(
-  py::array_t<double> startprob_,
-  py::array_t<double> transmat_,
-  py::array_t<double> log_frameprob_)
-{
-  auto log_startprob_ = log(startprob_);
-  auto log_startprob = log_startprob_.unchecked<1>();
-  auto log_transmat_ = log(transmat_);
-  auto log_transmat = log_transmat_.unchecked<2>();
-  auto log_frameprob = log_frameprob_.unchecked<2>();
-  auto ns = log_frameprob.shape(0), nc = log_frameprob.shape(1);
-  if (log_startprob.shape(0) != nc
-      || log_transmat.shape(0) != nc || log_transmat.shape(1) != nc) {
-    throw std::invalid_argument{"shape mismatch"};
-  }
-  auto state_sequence_ = py::array_t<ssize_t>{{ns}};
-  auto viterbi_lattice_ = py::array_t<double>{{ns, nc}};
-  auto state_sequence = state_sequence_.mutable_unchecked<1>();
-  auto viterbi_lattice = viterbi_lattice_.mutable_unchecked<2>();
-  {
-    py::gil_scoped_release nogil;
-    for (auto i = 0; i < nc; ++i) {
-      viterbi_lattice(0, i) = log_startprob(i) + log_frameprob(0, i);
-    }
-    for (auto t = 1; t < ns; ++t) {
-      for (auto i = 0; i < nc; ++i) {
-        auto max = -std::numeric_limits<double>::infinity();
-        for (auto j = 0; j < nc; ++j) {
-          max = std::max(max, viterbi_lattice(t - 1, j) + log_transmat(j, i));
-        }
-        viterbi_lattice(t, i) = max + log_frameprob(t, i);
-      }
-    }
-    auto row = &viterbi_lattice(ns - 1, 0);
-    auto prev = state_sequence(ns - 1) = std::max_element(row, row + nc) - row;
-    for (auto t = ns - 2; t >= 0; --t) {
-      auto max = std::make_pair(-std::numeric_limits<double>::infinity(), 0);
-      for (auto i = 0; i < nc; ++i) {
-        max = std::max(max, {viterbi_lattice(t, i) + log_transmat(i, prev), i});
-      }
-      state_sequence(t) = prev = max.second;
-    }
-  }
-  return {viterbi_lattice(ns - 1, state_sequence(ns - 1)), state_sequence_};
-}
-
 PYBIND11_MODULE(baum_welch, m) {
   m
     .def("forward", forward)
     .def("backward", backward)
     .def("compute_xi_sum", compute_xi_sum)
-    .def("viterbi", viterbi)
     ;
 }

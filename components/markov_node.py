@@ -2,7 +2,7 @@ import numpy as np
 from tqdm import tqdm
 from sklearn.utils.validation import check_random_state
 
-from components.tools import normalize, timing, solve_spectral_coclustering, solve_information_theoretic_coclustering
+from components.tools import normalize, timing
 from algo import baum_welch
 
 
@@ -23,7 +23,6 @@ class MarkovNode:
         self.random_state = check_random_state(random_state)
         self.n_iter = n_iter
         self.is_trained = False
-        self.state2node = []
 
         self.n_tokens = None
         self.start_vec = None
@@ -135,7 +134,6 @@ class MarkovNode:
 
         init = 1.0 / self.n_states
         self.start_vec = self.random_state.dirichlet(np.full(self.n_states, init))
-        normalize(self.start_vec)
 
         self.trans_mat = self.random_state.dirichlet(np.full(self.n_states, init), size=self.n_states)
 
