@@ -84,39 +84,36 @@ py::array_t<double> backward(
   return bwdlattice_;
 }
 
-py::array_t<double> compute_xi_sum(
+void compute_xi_sum(
   py::array_t<double> fwdlattice_,
   py::array_t<double> transmat_,
   py::array_t<double> bwdlattice_,
   py::array_t<double> frameprob_,
-  py::array_t<int> inputs_)
+  py::array_t<int> inputs_,
+  py::array_t<double> out_)
 {
   auto fwd = fwdlattice_.unchecked<2>();
   auto transmat = transmat_.unchecked<3>();
   auto bwd = bwdlattice_.unchecked<2>();
   auto frameprob = frameprob_.unchecked<2>();
   auto inputs = inputs_.unchecked<1>();
+  auto out = out_.mutable_unchecked<3>();
 
   auto ns = frameprob.shape(0), nc = frameprob.shape(1);
   auto n_inputs = transmat.shape(0);
 
-  auto xi_sum_ = py::array_t<double>{{n_inputs, nc, nc}};
-  auto xi_sum = xi_sum_.mutable_unchecked<3>();
-
-  std::fill_n(xi_sum.mutable_data(0, 0, 0), xi_sum.size(), 0);
   py::gil_scoped_release nogil;
   for (auto t = 0; t < ns - 1; ++t) {
     auto u_next = inputs(t + 1);
     for (auto i = 0; i < nc; ++i) {
       for (auto j = 0; j < nc; ++j) {
-        xi_sum(u_next, i, j) += fwd(t, i)
+        out(u_next, i, j) += fwd(t, i)
                                 * transmat(u_next, i, j)
                                 * frameprob(t + 1, j)
                                 * bwd(t + 1, j);
       }
     }
   }
-  return xi_sum_;
 }
 
 PYBIND11_MODULE(io_baum_welch, m) {

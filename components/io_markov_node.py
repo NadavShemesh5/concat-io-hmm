@@ -51,14 +51,9 @@ class IOMarkovNode(MarkovNode):
     ):
         input_seq, output_seq, frameprob = lattice
 
-        xi_sum = io_baum_welch.compute_xi_sum(
-            fwdlattice,
-            self.trans_mat,
-            bwdlattice,
-            frameprob,
-            input_seq,
+        io_baum_welch.compute_xi_sum(
+            fwdlattice, self.trans_mat, bwdlattice, frameprob, input_seq, stats["trans"]
         )
-        stats["trans"] += xi_sum
 
         for k in range(self.n_states):
             np.add.at(stats["obs"][:, k, :], (input_seq, output_seq), posteriors[:, k])
@@ -80,7 +75,7 @@ class IOMarkovNode(MarkovNode):
         return log_prob
 
     def perplexity(self, X):
-        return np.exp(- self.evaluate(X) / sum(len(x[0]) for x in X))
+        return np.exp(- self.evaluate(X) / sum(len(x[1]) for x in X))
 
     def init_parameters(self, X, vocab):
         if self.is_trained:
