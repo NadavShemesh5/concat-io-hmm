@@ -65,12 +65,7 @@ class MarkovNode:
     def fit(self, sentence):
         frameprob = self.compute_likelihood(sentence)
         log_prob, fwdlattice, scaling_factors = baum_welch.forward(self.start_vec, self.trans_mat, frameprob)
-        bwdlattice = baum_welch.backward(
-            self.start_vec,
-            self.trans_mat,
-            frameprob,
-            scaling_factors,
-        )
+        bwdlattice = baum_welch.backward(self.start_vec, self.trans_mat, frameprob, scaling_factors)
         posteriors = self.compute_posteriors(fwdlattice, bwdlattice)
         return frameprob, log_prob, posteriors, fwdlattice, bwdlattice
 
