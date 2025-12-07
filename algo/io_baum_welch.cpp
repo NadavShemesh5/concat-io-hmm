@@ -6,7 +6,7 @@
 namespace py = pybind11;
 using ssize_t = Py_ssize_t;
 
-std::tuple<double, py::array_t<double>, py::array_t<double>> forward(
+std::tuple<double, py::array_t<double>> forward(
   py::array_t<double> transmat_,
   py::array_t<double> frameprob_)
 {
@@ -19,8 +19,6 @@ std::tuple<double, py::array_t<double>, py::array_t<double>> forward(
 
   auto fwdlattice_ = py::array_t<double>{{ns, nc}};
   auto fwd = fwdlattice_.mutable_unchecked<2>();
-  auto scaling_ = py::array_t<double>{{ns}};
-  auto scaling = scaling_.mutable_unchecked<1>();
   auto log_prob = 0.;
   {
     py::gil_scoped_release nogil;
@@ -29,7 +27,7 @@ std::tuple<double, py::array_t<double>, py::array_t<double>> forward(
     auto sum = std::accumulate(&fwd(0, 0), &fwd(0, nc), 0.);
     if (sum < min_sum) throw std::range_error{"forward underflow"};
 
-    auto scale = scaling(0) = 1. / sum;
+    auto scale = 1. / sum;
     log_prob -= std::log(scale);
     for (auto i = 0; i < nc; ++i) fwd(0, i) *= scale;
     for (auto t = 1; t < ns; ++t) {
@@ -44,44 +42,47 @@ std::tuple<double, py::array_t<double>, py::array_t<double>> forward(
       sum = std::accumulate(&fwd(t, 0), &fwd(t, nc), 0.);
       if (sum < min_sum) throw std::range_error{"forward underflow"};
 
-      scale = scaling(t) = 1. / sum;
+      scale = 1. / sum;
       log_prob -= std::log(scale);
       for (auto j = 0; j < nc; ++j) fwd(t, j) *= scale;
     }
   }
-  return {log_prob, fwdlattice_, scaling_};
+  return {log_prob, fwdlattice_};
 }
 
 py::array_t<double> backward(
   py::array_t<double> transmat_,
-  py::array_t<double> frameprob_,
-  py::array_t<double> scaling_)
+  py::array_t<double> frameprob_)
 {
   auto transmat = transmat_.unchecked<3>();
   auto frameprob = frameprob_.unchecked<2>();
-  auto scaling = scaling_.unchecked<1>();
 
   auto ns = frameprob.shape(0);
   auto nc = frameprob.shape(1);
 
   auto bwdlattice_ = py::array_t<double>{{ns, nc}};
   auto bwd = bwdlattice_.mutable_unchecked<2>();
+  auto min_sum = 1e-300;
 
   py::gil_scoped_release nogil;
-  std::fill_n(bwd.mutable_data(0, 0), bwd.size(), 0);
-
-  for (auto i = 0; i < nc; ++i) bwd(ns - 1, i) = scaling(ns - 1);
-
+  double init_val = 1.0 / nc;
+  for (auto i = 0; i < nc; ++i) bwd(ns - 1, i) = init_val;
   for (auto t = ns - 2; t >= 0; --t) {
-    double scale_t = scaling(t);
+    double sum = 0.0;
     for (auto i = 0; i < nc; ++i) {
-      double acc = 0;
+      double acc = 0.0;
       for (auto j = 0; j < nc; ++j) {
         acc += transmat(t + 1, i, j) * frameprob(t + 1, j) * bwd(t + 1, j);
       }
-      bwd(t, i) = acc * scale_t;
+      bwd(t, i) = acc;
+      sum += acc;
     }
+    if (sum < min_sum) throw std::range_error{"forward underflow"};
+
+    double scale = 1.0 / sum;
+    for (auto i = 0; i < nc; ++i) bwd(t, i) *= scale;
   }
+
   return bwdlattice_;
 }
 

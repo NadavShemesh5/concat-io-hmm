@@ -30,7 +30,7 @@ class MarkovNode:
         self.emit_mat = None
         self.vocab = None
 
-    def train(self, X, vocab, valid=None):
+    def train(self, X, vocab, valid):
         self.init_parameters(X, vocab)
         for _ in range(self.n_iter):
             stats, curr_logprob = self.e_step(X)
@@ -38,9 +38,8 @@ class MarkovNode:
 
             perplexity = self.perplexity(X)
             print(f"Train Perplexity: {perplexity}")
-            if valid is not None:
-                perplexity = self.perplexity(valid)
-                print(f"Valid Perplexity: {perplexity}")
+            perplexity = self.perplexity(valid)
+            print(f"Valid Perplexity: {perplexity}")
 
         self.is_trained = True
         return self
