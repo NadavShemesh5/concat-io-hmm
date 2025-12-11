@@ -31,7 +31,7 @@ class MarkovNode:
         self.vocab = None
 
     def train(self, X, vocab, valid):
-        self.init_parameters(X, vocab)
+        self.init_parameters(vocab)
         for _ in range(self.n_iter):
             stats, curr_logprob = self.e_step(X)
             self.m_step(stats)
@@ -122,7 +122,7 @@ class MarkovNode:
     def perplexity(self, X):
         return np.exp(- self.evaluate(X) / sum(len(x) for x in X))
 
-    def init_parameters(self, X, vocab):
+    def init_parameters(self, vocab):
         if self.is_trained:
             return
 
