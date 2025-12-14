@@ -1,54 +1,37 @@
 import click
 
-from components.data_iterator import BatchIterator, View
 from components.markov_graph import MarkovGraph
-from components.pseudo_node import PseudoNode
-from data.io_data_creation import load_dataset
+from data.data_iterator import BatchIterator
 from components.io_markov_node import IOMarkovNode
 
 
 @click.command()
 def main():
-    data = load_dataset()
-    train = data['train']['tokens']
-    valid = data['valid']['tokens']
-    vocab = data['vocab']
-    vocab_size = int(max(vocab['idx2token'].keys())) + 1
+    train_iter = BatchIterator("data/io_processed_data/train.npy", batch_size=32)
+    valid_iter = BatchIterator("data/io_processed_data/valid.npy")
 
-    data_coordinator = BatchIterator(train, batch_size=256)
-    # data_coordinator = BatchIterator(train, batch_size=len(train))
-    input_data = View(data_coordinator, 0)
-    output_data = View(data_coordinator, 1)
+    graph = MarkovGraph(n_iter=100)
 
-    graph = MarkovGraph(n_iter=10)
-    data_input = PseudoNode(graph, input_data)
-    node_1 = IOMarkovNode(graph, n_inputs=vocab_size, n_states=32)
-    node_2 = IOMarkovNode(graph, n_inputs=32, n_states=32)
-    node_3 = IOMarkovNode(graph, n_inputs=32, n_states=32)
-    node_4 = IOMarkovNode(graph, n_inputs=32, n_states=32)
-    node_5 = IOMarkovNode(graph, n_inputs=32, n_states=32)
-    node_6 = IOMarkovNode(graph, n_inputs=32, n_states=32)
-    node_7 = IOMarkovNode(graph, n_inputs=32, n_states=32)
-    data_output = PseudoNode(graph, output_data, n_inputs=vocab_size)
+    input_0 = IOMarkovNode(graph, n_states=1, input_index=0)
+    input_1 = IOMarkovNode(graph, n_states=2, input_index=1)
+    input_2 = IOMarkovNode(graph, n_states=2, input_index=2)
+    input_3 = IOMarkovNode(graph, n_states=2, input_index=3)
+    hidden_0 = IOMarkovNode(graph, n_states=32, n_inputs=4)
+    output_0 = IOMarkovNode(graph, n_states=1, n_inputs=32, output_index=0)
+    input_0.add_child(hidden_0)
+    input_1.add_child(hidden_0)
+    input_2.add_child(hidden_0)
+    input_3.add_child(hidden_0)
+    hidden_0.add_child(output_0)
 
-    data_input.add_child(node_1)
-    node_1.add_child(node_2)
-    node_2.add_child(node_3)
-    node_3.add_child(node_4)
-    node_4.add_child(node_5)
-    node_5.add_child(node_6)
-    node_6.add_child(node_7)
-    node_7.add_child(data_output)
+    # node_0 = IOMarkovNode(graph, n_states=32, input_index=0)
+    # node_1 = IOMarkovNode(graph, n_states=32, n_inputs=512, output_index=0)
+    # node_0.add_child(node_1)
 
-    # graph = MarkovGraph(n_iter=10)
-    # data_input = PseudoNode(graph, input_data)
-    # node_1 = IOMarkovNode(graph, n_inputs=vocab_size, n_states=1)
-    # data_output = PseudoNode(graph, output_data, n_inputs=vocab_size)
-    #
-    # data_input.add_child(node_1)
-    # node_1.add_child(data_output)
+    # node_0 = IOMarkovNode(graph, n_states=1, input_index=0, output_index=0)
+    # graph.add_node(node_0)
 
-    graph.train(data_coordinator)
+    graph.train(train_iter, valid_iter)
 
 if __name__ == "__main__":
     main()

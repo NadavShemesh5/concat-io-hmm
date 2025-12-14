@@ -6,7 +6,7 @@ import urllib.request
 from collections import Counter
 
 
-special_tokens = ["<unk>", "<sos>", "<eos>"]
+special_tokens = ["<pad>", "<sos>", "<unk>", "<eos>"]
 
 
 def download_wikitext2(data_dir="./raw_data"):
@@ -40,30 +40,6 @@ def download_wikitext2(data_dir="./raw_data"):
     return data_dir
 
 
-def parse_paragraphs(lines):
-    paragraphs = []
-    curr_sentences = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-
-        if line.startswith("="):
-            curr_paragraph = " ".join(curr_sentences)
-            if curr_paragraph:
-                paragraphs.append(curr_paragraph)
-            curr_sentences = []
-            continue
-
-        curr_sentences.append(line)
-
-    curr_paragraph = " ".join(curr_sentences)
-    if curr_paragraph:
-        paragraphs.append(curr_paragraph)
-
-    return paragraphs
-
-
 def parse_sentences(lines):
     sentences = []
     for line in lines:
@@ -79,9 +55,6 @@ def read_file(filepath, partition):
     with open(filepath, "r") as f:
         lines = f.readlines()
 
-    if partition == "paragraphs":
-        return parse_paragraphs(lines)
-
     return parse_sentences(lines)
 
 
@@ -91,174 +64,100 @@ def tokenize(text, lower_case):
     return tokens
 
 
-def encode_paragraphs(paragraphs, token2idx, lower_case):
-    """
-    Encode sentences to token indices
-
-    Args:
-        paragraphs: List of sentence strings
-        token2idx: Dictionary mapping tokens to indices
-
-    Returns:
-        all_tokens: 1D numpy array of all tokens concatenated
-        sentence_lengths: 1D numpy array of length of each sentence
-    """
-    all_tokens = []
-
+def encode_sentences(sentences, token2idx, lower_case, history_size):
     unk_idx = token2idx["<unk>"]
     eos_idx = token2idx["<eos>"]
     sos_idx = token2idx["<sos>"]
+    pad_idx = token2idx["<pad>"]
 
-    for paragraph in paragraphs:
-        tokens = tokenize(paragraph, lower_case)
+    encoded_list = []
+    max_width = 0
+    for sentence in sentences:
+        tokens = tokenize(sentence, lower_case)
         indices = [token2idx.get(token, unk_idx) for token in tokens]
-        out_indices = indices + [eos_idx]
-        in_indices = [sos_idx] + indices
+        max_width = max(max_width, len(indices) + 1)  # +1 for eos
 
-        all_tokens.append(tuple((np.array(in_indices), np.array(out_indices))))
+        history = [indices + [eos_idx]]
+        for i in range(history_size):
+            curr_in_indices = [pad_idx] * i + [sos_idx] + indices[: len(indices) - i]
+            history.append(curr_in_indices)
 
-    return all_tokens
+        encoded_list.append(history)
+
+    data = np.full((len(encoded_list), history_size + 1, max_width), pad_idx, dtype=np.uint16)
+
+    # Fill Data
+    for i, seq in enumerate(encoded_list):
+        for j, sentence in enumerate(seq):
+            l = min(len(sentence), max_width)
+            data[i, j, :l] = sentence[:l]
+
+    return data
 
 
-def build_vocab(texts, lower_case):
-    """
-    Build vocabulary from list of texts
+def build_vocab(sentences, lower_case):
+    counter = Counter()
+    for p in sentences:
+        if lower_case: p = p.lower()
+        counter.update(p.split())
 
-    Args:
-        texts: List of text strings
-    """
-    print("Building vocabulary...")
-
-    token_counter = Counter()
-    for text in texts:
-        tokens = tokenize(text, lower_case)
-        token_counter.update(tokens)
-
-    token_counter.update(special_tokens)
-    tokens = list(token_counter.keys())
-
-    token2idx = {}
-    for token in tokens:
-        token2idx[token] = len(token2idx)
-
-    idx2token = {idx: token for token, idx in token2idx.items()}
-
+    # Sort by frequency
+    vocab = special_tokens + [word for word, _ in counter.most_common()]
+    token2idx = {token: idx for idx, token in enumerate(vocab)}
+    idx2token = np.array(vocab)
     return token2idx, idx2token
 
 
-def save_dataset(dataset, save_dir="./io_processed_data"):
-    """Save processed dataset to disk"""
-    os.makedirs(save_dir, exist_ok=True)
-
-    # Save data splits
-    np.save(
-        os.path.join(save_dir, "train_tokens.npy"),
-        np.array(dataset["train"]["tokens"], dtype=object),
-        allow_pickle=True,
-    )
-    np.save(
-        os.path.join(save_dir, "valid_tokens.npy"),
-        np.array(dataset["valid"]["tokens"], dtype=object),
-        allow_pickle=True,
-    )
-    np.save(
-        os.path.join(save_dir, "test_tokens.npy"),
-        np.array(dataset["test"]["tokens"], dtype=object),
-        allow_pickle=True,
-    )
-
-    # Save vocabulary
-    np.save(
-        os.path.join(save_dir, "token2idx.npy"),
-        dataset["vocab"]["token2idx"],
-        allow_pickle=True,
-    )
-    np.save(
-        os.path.join(save_dir, "idx2token.npy"),
-        dataset["vocab"]["idx2token"],
-        allow_pickle=True,
-    )
-
-    print(f"\nDataset saved to {save_dir}/")
-
-
-def load_dataset(save_dir="./data/io_processed_data"):
-    dataset = {
-        "train": {
-            "tokens": np.load(
-                os.path.join(save_dir, "train_tokens.npy"), allow_pickle=True
-            ).tolist(),
-        },
-        "valid": {
-            "tokens": np.load(
-                os.path.join(save_dir, "valid_tokens.npy"), allow_pickle=True
-            ).tolist(),
-        },
-        "test": {
-            "tokens": np.load(
-                os.path.join(save_dir, "test_tokens.npy"), allow_pickle=True
-            ).tolist(),
-        },
-        "vocab": {
-            "token2idx": np.load(
-                os.path.join(save_dir, "token2idx.npy"), allow_pickle=True
-            ).item(),
-            "idx2token": np.load(
-                os.path.join(save_dir, "idx2token.npy"), allow_pickle=True
-            ).item(),
-        },
-    }
-
-    return dataset
-
-
 @click.command()
-@click.option(
-    "--partition", type=click.Choice(["sentences", "paragraphs"]), default="sentences"
-)
-@click.option("-lc", "--lower-case", is_flag=True)
-def main(partition, lower_case):
+@click.option('--partition', default=1.0, help='Fraction of data to use')
+@click.option('--lower_case', is_flag=True, default=False)
+@click.option('--history_size', default=8, type=int, help='Content sequence length')
+def main(partition, lower_case, history_size):
     extract_path = download_wikitext2()
 
-    # Read files
     train_path = os.path.join(extract_path, "wiki.train.txt")
     valid_path = os.path.join(extract_path, "wiki.valid.txt")
     test_path = os.path.join(extract_path, "wiki.test.txt")
 
     print("Reading files...")
-    train_paragraphs = read_file(train_path, partition)
-    valid_paragraphs = read_file(valid_path, partition)
-    test_paragraphs = read_file(test_path, partition)
+    train_sentences = read_file(train_path, partition)
+    valid_sentences = read_file(valid_path, partition)
+    test_sentences = read_file(test_path, partition)
 
-    print(f"Train paragraphs: {len(train_paragraphs)}")
-    print(f"Valid paragraphs: {len(valid_paragraphs)}")
-    print(f"Test paragraphs: {len(test_paragraphs)}")
+    print(f"Train paragraphs: {len(train_sentences)}")
+    print(f"Valid paragraphs: {len(valid_sentences)}")
+    print(f"Test paragraphs: {len(test_sentences)}")
 
-    # Build vocabulary from training data only
-    token2idx, idx2token = build_vocab(train_paragraphs, lower_case)
+    token2idx, idx2token = build_vocab(train_sentences, lower_case)
 
-    # Encode all splits
-    print("\nEncoding train set...")
-    train_tokens = encode_paragraphs(train_paragraphs, token2idx, lower_case)
+    print("\nEncoding Train...")
+    train_np = encode_sentences(train_sentences, token2idx, lower_case, history_size)
 
-    print("Encoding validation set...")
-    valid_tokens = encode_paragraphs(valid_paragraphs, token2idx, lower_case)
+    print("Encoding Validation...")
+    valid_np = encode_sentences(valid_sentences, token2idx, lower_case, history_size)
 
-    print("Encoding test set...")
-    test_tokens = encode_paragraphs(test_paragraphs, token2idx, lower_case)
+    print("Encoding Test...")
+    test_np = encode_sentences(test_sentences, token2idx, lower_case, history_size)
 
-    print("\n=== Dataset Statistics ===")
-    print(f"Vocabulary size: {len(token2idx):,}")
+    output_dir = "./io_processed_data"
+    os.makedirs(output_dir, exist_ok=True)
 
-    save_dataset(
-        {
-            "train": {"tokens": train_tokens},
-            "valid": {"tokens": valid_tokens},
-            "test": {"tokens": test_tokens},
-            "vocab": {"token2idx": token2idx, "idx2token": idx2token},
-        }
-    )
+    np.save(os.path.join(output_dir, "train.npy"), train_np)
+    np.save(os.path.join(output_dir, "valid.npy"), valid_np)
+    np.save(os.path.join(output_dir, "test.npy"), test_np)
 
+    np.save(os.path.join(output_dir, "vocab.npy"), idx2token)
+    np.savez(os.path.join(output_dir, "meta.npz"),
+             pad_idx=token2idx["<pad>"],
+             unk_idx=token2idx["<unk>"],
+             sos_idx=token2idx["<sos>"],
+             eos_idx=token2idx["<eos>"],
+             vocab_size=len(idx2token),
+             history_size=history_size)
+
+    print(f"\nDone. Saved to {output_dir}")
+    print(f"Vocab Size: {len(idx2token)}")
+    print(f"Pad Index: {token2idx['<pad>']}")
 
 if __name__ == "__main__":
     main()
