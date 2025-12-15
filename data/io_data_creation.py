@@ -111,7 +111,7 @@ def build_vocab(sentences, lower_case):
 @click.command()
 @click.option('--partition', default=1.0, help='Fraction of data to use')
 @click.option('--lower_case', is_flag=True, default=False)
-@click.option('--history_size', default=8, type=int, help='Content sequence length')
+@click.option('--history_size', default=32, type=int, help='Content sequence length')
 def main(partition, lower_case, history_size):
     extract_path = download_wikitext2()
 

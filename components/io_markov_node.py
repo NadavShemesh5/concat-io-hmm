@@ -57,60 +57,68 @@ class IOMarkovNode:
         self.optimize_trans(stats)
 
     def init_trans_optimizer(self):
-        stats = {"trans": np.zeros_like(self.trans_mat), "start": np.zeros_like(self.start_mat)}
+        stats = {
+            "trans": np.zeros_like(self.trans_mat, dtype=np.float64),
+            "start": np.zeros_like(self.start_mat, dtype=np.float64),
+        }
         return stats
 
     def init_emit_optimizer(self, stats, idx):
-        stats["emit"] = np.zeros_like(self.emit_mats[idx])
+        stats["emit"] = np.zeros_like(self.emit_mats[idx], dtype=np.float64)
         return stats
 
     def optimize_trans(self, stats):
         stats["start"] += self.start_prior
-        self.start_mat = stats["start"]
-        normalize(self.start_mat, axis=1)
+        normalize(stats["start"], axis=0)
+        self.start_mat = stats["start"].astype(np.float32)
 
         stats["trans"] += self.trans_prior
-        self.trans_mat = stats["trans"]
-        normalize(self.trans_mat, axis=2)
-
+        normalize(stats["trans"], axis=2)
+        self.trans_mat = stats["trans"].astype(np.float32)
     def optimize_emit(self, stats, idx):
         stats["emit"] += self.emit_prior
-        self.emit_mats[idx] = stats["emit"]
-        normalize(self.emit_mats[idx], axis=2)
+        normalize(stats["emit"], axis=2)
+        self.emit_mats[idx] = stats["emit"].astype(np.float32)
 
     def fit_tensor_batch(self, input_seqs, output_seqs, stats, idx):
-        trans_dynamic, emit_dynamic, start_dynamic = self.get_sentence_dynamics(input_seqs, output_seqs, idx)
-        total_log_prob, fwd, scaling = io_baum_welch.forward(trans_dynamic, emit_dynamic, start_dynamic, self.batch_lengths)
-        bwd = io_baum_welch.backward(trans_dynamic, emit_dynamic, scaling, self.batch_lengths)
-
+        total_log_prob, fwd, scaling = io_baum_welch.forward(
+            self.trans_mat,
+            self.emit_mats[idx],
+            self.start_mat,
+            input_seqs,
+            output_seqs,
+            self.batch_lengths,
+        )
+        bwd = io_baum_welch.backward(
+            self.trans_mat,
+            self.emit_mats[idx],
+            scaling,
+            input_seqs,
+            output_seqs,
+            self.batch_lengths,
+        )
         posteriors = self.compute_posteriors(fwd, bwd)
         io_baum_welch.compute_xi_sum(
-            fwd, trans_dynamic, bwd, emit_dynamic, input_seqs, self.batch_lengths, stats["trans"]
+            fwd,
+            self.trans_mat,
+            bwd,
+            self.emit_mats[idx],
+            input_seqs,
+            output_seqs,
+            self.batch_lengths,
+            stats["trans"],
         )
 
         start_tokens = input_seqs[:, 0]
         start_posteriors = posteriors[:, 0, :]
-        np.add.at(stats["start"], start_tokens, start_posteriors)
+        np.add.at(stats["start"].T, start_tokens, start_posteriors)
 
         max_len = input_seqs.shape[1]
         mask = np.arange(max_len) < self.batch_lengths[:, None]
-
         valid_in = input_seqs[mask]
         valid_out = output_seqs[mask]
         valid_post = posteriors[mask]
-
-        for k in range(self.n_states):
-            np.add.at(
-                stats["emit"][:, k, :],
-                (valid_in, valid_out),
-                valid_post[:, k]
-            )
-
-    def get_sentence_dynamics(self, input_seqs, output_seqs, idx):
-        trans_dynamic = self.trans_mat[input_seqs, :]
-        emit_dynamic = self.emit_mats[idx][input_seqs, :, output_seqs]
-        start_dynamic = self.start_mat[input_seqs[:, 0], :]
-        return trans_dynamic, emit_dynamic, start_dynamic
+        np.add.at(stats["emit"].transpose(0, 2, 1), (valid_in, valid_out), valid_post)
 
     @staticmethod
     def compute_posteriors(fwd, bwd):
@@ -144,8 +152,10 @@ class IOMarkovNode:
                 evidence_pairs.append((batch, emit))
 
         backward_sample = self.sample_backward(evidence_pairs, choose_max)
-        for parent in self.parents:
-            parent.backward_batches.append(backward_sample)
+        dims = tuple([self.n_inputs] * len(self.parents))
+        unraveled_samples = np.unravel_index(backward_sample, dims)
+        for i, parent in enumerate(self.parents):
+            parent.backward_batches.append(unraveled_samples[i])
             parent.parent_sending_order.append(self)
 
         if self.parents:
@@ -155,7 +165,7 @@ class IOMarkovNode:
         if len(self.forward_batches) == 1:
             return
 
-        dims = tuple([self.n_inputs] * len(self.forward_batches)) if self.parents else self.n_inputs
+        dims = tuple([self.n_inputs] * len(self.forward_batches))
         combined_batch = np.ravel_multi_index(self.forward_batches, dims)
         self.forward_batches = [combined_batch]
 
@@ -168,26 +178,27 @@ class IOMarkovNode:
         for t in range(T):
             tokens = sentence[:, t]
             if t == 0:
-                state_probs = self.start_mat[tokens, :]
+                state_probs = self.start_mat[:, tokens].T
             else:
                 state_probs = self.trans_mat[tokens, prev_state, :]
 
             if choose_max:
                 curr_state = np.argmax(state_probs, axis=1)
             else:
-                curr_state = np.array([
-                    self.random_state.choice(self.n_states, p=p)
-                    for p in state_probs
-                ])
+                curr_state = np.array(
+                    [self.random_state.choice(self.n_states, p=p) for p in state_probs]
+                )
 
             emit_probs = emit_mat[tokens, curr_state, :]
             if choose_max:
                 output_token = np.argmax(emit_probs, axis=1)
             else:
-                output_token = np.array([
-                    self.random_state.choice(emit_mat.shape[-1], p=p)
-                    for p in emit_probs
-                ])
+                output_token = np.array(
+                    [
+                        self.random_state.choice(emit_mat.shape[-1], p=p)
+                        for p in emit_probs
+                    ]
+                )
 
             output_seq[:, t] = output_token
             prev_state = curr_state
@@ -204,11 +215,11 @@ class IOMarkovNode:
 
         for t in range(T):
             if t == 0:
-                joint_probs = np.tile(self.start_mat[np.newaxis, :, :], (N, 1, 1)) # (N, U, S)
+                joint_probs = np.tile(self.start_mat.T[np.newaxis, :, :], (N, 1, 1))
             else:
                 joint_probs = trans_mat_T[prev_state]
 
-            for (child_batch, child_emit) in output_pairs:
+            for child_batch, child_emit in output_pairs:
                 y_t = child_batch[:, t]
                 emit_slice = child_emit[:, :, y_t].transpose(2, 0, 1)
                 joint_probs *= emit_slice
@@ -218,10 +229,12 @@ class IOMarkovNode:
             if choose_max:
                 indices = np.argmax(flat_probs, axis=1)
             else:
-                indices = np.array([
-                    self.random_state.choice(flat_probs.shape[1], p=p)
-                    for p in flat_probs
-                ])
+                indices = np.array(
+                    [
+                        self.random_state.choice(flat_probs.shape[1], p=p)
+                        for p in flat_probs
+                    ]
+                )
 
             input_token = indices // S
             curr_state = indices % S
@@ -235,8 +248,14 @@ class IOMarkovNode:
         self.accumulate_forward()
         input_seqs = self.forward_batches[0]
         output_seqs = self.backward_batches[0]
-        trans_dynamic, emit_dynamic, start_dynamic = self.get_sentence_dynamics(input_seqs, output_seqs, 0)
-        total_log_prob, fwd, scaling = io_baum_welch.forward(trans_dynamic, emit_dynamic, start_dynamic, self.batch_lengths)
+        total_log_prob, _, _ = io_baum_welch.forward(
+            self.trans_mat,
+            self.emit_mats[0],
+            self.start_mat,
+            input_seqs,
+            output_seqs,
+            self.batch_lengths,
+        )
         return total_log_prob
 
     def init_matrices(self, output_dimension=None):
@@ -245,12 +264,12 @@ class IOMarkovNode:
 
         input_dimension = int(np.prod([self.n_inputs for _ in range(len(self.parents))])) if self.parents else self.n_inputs
         init = 1.0 / self.n_states
-        self.trans_mat = self.random_state.dirichlet(np.full(self.n_states, init), size=(input_dimension, self.n_states))
-        self.start_mat = self.random_state.dirichlet(np.full(self.n_states, init), size=input_dimension)
+        self.trans_mat = self.random_state.dirichlet(np.full(self.n_states, init), size=(input_dimension, self.n_states)).astype(np.float32)
+        self.start_mat = self.random_state.dirichlet(np.full(self.n_states, init), size=input_dimension).T.astype(np.float32)
 
         child_dimensions = [child.n_inputs for child in self.children] or [output_dimension]
         for dim in child_dimensions:
-            emit_mat = self.random_state.rand(input_dimension, self.n_states, dim)
+            emit_mat = self.random_state.rand(input_dimension, self.n_states, dim).astype(np.float32)
             normalize(emit_mat, axis=2)
             self.emit_mats.append(emit_mat)
 
@@ -261,6 +280,15 @@ class IOMarkovNode:
         self.backward_batches = []
         self.parent_sending_order = []
         self.batch_lengths = []
+
+    def num_of_parameters(self):
+        total_params = 0
+        total_params += sum(emit.size for emit in self.emit_mats)
+        if self.n_states > 1:
+            total_params += self.start_mat.size
+            total_params += self.trans_mat.size
+
+        return total_params
 
     def add_child(self, child):
         self.graph.add_edge(self, child)

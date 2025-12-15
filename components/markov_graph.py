@@ -12,19 +12,19 @@ class MarkovGraph(DiGraph):
     def train(self, train, validation):
         # TODO: wrap n_iter, training_loop scheduling and multi_sample in scheduler class
         self.init_graph(train.vocab_size)
-        for (train_batch, train_lens), (valid_batch, valid_lens) in zip(train, validation):
-            for _ in range(self.n_iter):
-                self.feed_data(train_batch, train_lens, multi_sample=1, choose_max=True)
-                for _ in range(1):
-                    self.training_loop()
+        valid_batch, valid_lens = next(validation)
+        train_batch, train_lens = next(train)
+        for _ in range(self.n_iter):
+            self.feed_data(train_batch, train_lens, multi_sample=1, choose_max=True)
+            for _ in range(1):
+                self.training_loop()
 
-                self.evaluate(train_batch, train_lens, is_train=True)
-                # self.evaluate(valid_batch, valid_lens)
+            self.evaluate(valid_batch, valid_lens)
 
 
     def training_loop(self):
         self.backward()
-        self.forward()
+        self.forward(choose_max=True)
 
     def feed_data(self, data, lengths, multi_sample=1, choose_max=False):
         lengths =  self.tile_batch(lengths, multi_sample)[0]
@@ -61,7 +61,7 @@ class MarkovGraph(DiGraph):
     def backward(self):
         for node in reversed(self.order):
             node.fit_batch()
-            node.send_backward_messages()
+            node.send_backward_messages(choose_max=True)
 
     def forward(self, train=True, choose_max=False):
         for node in self.order:
@@ -83,4 +83,12 @@ class MarkovGraph(DiGraph):
 
             node.init_matrices(vocab_size)
 
+        print("Total Parameters:", self.num_of_parameters())
         self.order = list(nx.topological_sort(self))
+
+    def num_of_parameters(self):
+        total_params = 0
+        for node in self.nodes:
+            total_params += node.num_of_parameters()
+
+        return total_params
