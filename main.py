@@ -7,64 +7,32 @@ from components.io_markov_node import IOMarkovNode
 
 @click.command()
 def main():
-    train_iter = BatchIterator("data/io_processed_data/train.npy")
+    train_iter = BatchIterator("data/io_processed_data/train.npy", batch_size=256)
     valid_iter = BatchIterator("data/io_processed_data/valid.npy")
 
     graph = MarkovGraph(n_iter=100)
 
-    input_0 = IOMarkovNode(graph, n_states=1, input_index=0)
-    input_1 = IOMarkovNode(graph, n_states=1, input_index=3)
-    input_2 = IOMarkovNode(graph, n_states=1, input_index=7)
-    input_3 = IOMarkovNode(graph, n_states=1, input_index=11)
-    hidden_0 = IOMarkovNode(graph, n_states=8, n_inputs=128)
-    hidden_1 = IOMarkovNode(graph, n_states=8, n_inputs=128)
-    hidden_2 = IOMarkovNode(graph, n_states=8, n_inputs=128)
-    hidden_3 = IOMarkovNode(graph, n_states=8, n_inputs=128)
-    hidden_00 = IOMarkovNode(graph, n_states=8, n_inputs=32)
-    hidden_11 = IOMarkovNode(graph, n_states=8, n_inputs=32)
-    hidden_22 = IOMarkovNode(graph, n_states=8, n_inputs=32)
-    hidden_33 = IOMarkovNode(graph, n_states=8, n_inputs=32)
-    hidden_000 = IOMarkovNode(graph, n_states=8, n_inputs=32)
-    hidden_111 = IOMarkovNode(graph, n_states=8, n_inputs=32)
-    hidden_222 = IOMarkovNode(graph, n_states=8, n_inputs=32)
-    hidden_333 = IOMarkovNode(graph, n_states=8, n_inputs=32)
-    hidden_0000 = IOMarkovNode(graph, n_states=8, n_inputs=32)
-    hidden_1111 = IOMarkovNode(graph, n_states=8, n_inputs=32)
-    hidden_00000 = IOMarkovNode(graph, n_states=8, n_inputs=32)
-    output_0 = IOMarkovNode(graph, n_states=1, n_inputs=64, output_index=0)
-    input_0.add_child(hidden_0)
-    input_1.add_child(hidden_1)
-    input_2.add_child(hidden_2)
-    input_3.add_child(hidden_3)
-    hidden_0.add_child(hidden_00)
-    hidden_0.add_child(hidden_22)
-    hidden_1.add_child(hidden_11)
-    hidden_1.add_child(hidden_33)
-    hidden_2.add_child(hidden_22)
-    hidden_2.add_child(hidden_00)
-    hidden_3.add_child(hidden_33)
-    hidden_3.add_child(hidden_11)
-    hidden_00.add_child(hidden_000)
-    hidden_00.add_child(hidden_111)
-    hidden_11.add_child(hidden_111)
-    hidden_11.add_child(hidden_000)
-    hidden_22.add_child(hidden_222)
-    hidden_22.add_child(hidden_333)
-    hidden_33.add_child(hidden_333)
-    hidden_33.add_child(hidden_222)
-    hidden_000.add_child(hidden_0000)
-    hidden_111.add_child(hidden_0000)
-    hidden_222.add_child(hidden_1111)
-    hidden_333.add_child(hidden_1111)
-    hidden_0000.add_child(hidden_00000)
-    hidden_1111.add_child(hidden_00000)
-    hidden_00000.add_child(output_0)
+    # prev_layer = [IOMarkovNode(graph, n_states=1, input_index=0)]
+    # for l in range(8):
+    #     layer = []
+    #     for i in range(8):
+    #         node = IOMarkovNode(graph, n_states=1, n_inputs=2)
+    #         for prev_node in prev_layer:
+    #             prev_node.add_child(node)
+    #
+    #         layer.append(node)
+    #
+    #     prev_layer = layer
+    #
+    # output_node = IOMarkovNode(graph, n_states=1, n_inputs=2, output_index=0)
+    # for prev_node in prev_layer:
+    #     prev_node.add_child(output_node)
 
     # node_0 = IOMarkovNode(graph, n_states=1, input_index=0)
-    # node_1 = IOMarkovNode(graph, n_states=4, n_inputs=4)
-    # node_2 = IOMarkovNode(graph, n_states=4, n_inputs=4)
-    # node_3 = IOMarkovNode(graph, n_states=4, n_inputs=4)
-    # node_4 = IOMarkovNode(graph, n_states=1, n_inputs=4, output_index=0)
+    # node_1 = IOMarkovNode(graph, n_states=32, n_inputs=32)
+    # node_2 = IOMarkovNode(graph, n_states=16, n_inputs=16)
+    # node_3 = IOMarkovNode(graph, n_states=8, n_inputs=8)
+    # node_4 = IOMarkovNode(graph, n_states=4, n_inputs=4, output_index=0)
     # node_0.add_child(node_1)
     # node_0.add_child(node_2)
     # node_0.add_child(node_3)
@@ -76,14 +44,15 @@ def main():
     # node_2.add_child(node_4)
     # node_3.add_child(node_4)
 
-    # node_0 = IOMarkovNode(graph, n_states=32, input_index=0)
-    # node_1 = IOMarkovNode(graph, n_states=32, n_inputs=32, output_index=0)
-    # node_0.add_child(node_1)
+    node_0 = IOMarkovNode(graph, n_states=8, input_index=0)
+    node_1 = IOMarkovNode(graph, n_states=8, n_inputs=64, output_index=0)
+    node_0.add_child(node_1)
 
     # node_0 = IOMarkovNode(graph, n_states=1, input_index=0, output_index=0)
     # graph.add_node(node_0)
 
     graph.train(train_iter, valid_iter)
+
 
 if __name__ == "__main__":
     main()

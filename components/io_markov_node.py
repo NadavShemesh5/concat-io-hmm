@@ -1,7 +1,14 @@
 import numpy as np
 from sklearn.utils.validation import check_random_state
 
-from components.tools import normalize, timing
+from components.tools import (
+    normalize,
+    timing,
+    viterbi_backward,
+    viterbi_forward,
+    greedy_forward,
+    greedy_backward,
+)
 from algo import io_baum_welch
 
 
@@ -49,7 +56,9 @@ class IOMarkovNode:
             self.optimize_emit(stats, 0)
 
         for idx in range(len(self.children)):
-            output_batch = self.backward_batches[idx]
+            child = self.children[idx]
+            batch_idx = self.parent_sending_order.index(child)
+            output_batch = self.backward_batches[batch_idx]
             stats = self.init_emit_optimizer(stats, idx)
             self.fit_tensor_batch(input_batch, output_batch, stats, idx)
             self.optimize_emit(stats, idx)
@@ -75,6 +84,7 @@ class IOMarkovNode:
         stats["trans"] += self.trans_prior
         normalize(stats["trans"], axis=2)
         self.trans_mat = stats["trans"].astype(np.float32)
+
     def optimize_emit(self, stats, idx):
         stats["emit"] += self.emit_prior
         normalize(stats["emit"], axis=2)
@@ -127,17 +137,21 @@ class IOMarkovNode:
         return posteriors
 
     @timing
-    def send_forward_messages(self, choose_max=False):
+    def send_forward_messages(self, choose_max):
         self.accumulate_forward()
+        input_batch = self.forward_batches[0]
         for child, emit in zip(self.children, self.emit_mats):
-            forward_sample = self.sample_forward(self.forward_batches[0], emit, choose_max)
+            sample_func = viterbi_forward if choose_max else greedy_forward
+            forward_sample = sample_func(
+                input_batch, self.start_mat.T, self.trans_mat, emit
+            )
             child.forward_batches.append(forward_sample)
 
         if self.children:
             self.backward_batches = []
 
     @timing
-    def send_backward_messages(self, choose_max=False):
+    def send_backward_messages(self, choose_max):
         if not self.parents:
             return
 
@@ -151,7 +165,15 @@ class IOMarkovNode:
                 emit = self.emit_mats[self.children.index(child)]
                 evidence_pairs.append((batch, emit))
 
-        backward_sample = self.sample_backward(evidence_pairs, choose_max)
+        target_batch, emit_mat = evidence_pairs[0]
+        sample_func = viterbi_backward if choose_max else greedy_backward
+        backward_sample = sample_func(
+            target_batch,
+            self.start_mat.T,
+            self.trans_mat,
+            emit_mat
+        )
+
         dims = tuple([self.n_inputs] * len(self.parents))
         unraveled_samples = np.unravel_index(backward_sample, dims)
         for i, parent in enumerate(self.parents):
@@ -168,81 +190,6 @@ class IOMarkovNode:
         dims = tuple([self.n_inputs] * len(self.forward_batches))
         combined_batch = np.ravel_multi_index(self.forward_batches, dims)
         self.forward_batches = [combined_batch]
-
-    def sample_forward(self, batch_data, emit_mat, choose_max):
-        N, T = batch_data.shape
-        sentence = batch_data
-        output_seq = np.zeros((N, T), dtype=int)
-        prev_state = np.zeros(N, dtype=int)
-
-        for t in range(T):
-            tokens = sentence[:, t]
-            if t == 0:
-                state_probs = self.start_mat[:, tokens].T
-            else:
-                state_probs = self.trans_mat[tokens, prev_state, :]
-
-            if choose_max:
-                curr_state = np.argmax(state_probs, axis=1)
-            else:
-                curr_state = np.array(
-                    [self.random_state.choice(self.n_states, p=p) for p in state_probs]
-                )
-
-            emit_probs = emit_mat[tokens, curr_state, :]
-            if choose_max:
-                output_token = np.argmax(emit_probs, axis=1)
-            else:
-                output_token = np.array(
-                    [
-                        self.random_state.choice(emit_mat.shape[-1], p=p)
-                        for p in emit_probs
-                    ]
-                )
-
-            output_seq[:, t] = output_token
-            prev_state = curr_state
-
-        return output_seq
-
-    def sample_backward(self, output_pairs, choose_max):
-        N, T = output_pairs[0][0].shape
-        S = self.n_states
-
-        input_seq = np.zeros((N, T), dtype=int)
-        prev_state = np.zeros(N, dtype=int)
-        trans_mat_T = self.trans_mat.transpose(1, 0, 2)
-
-        for t in range(T):
-            if t == 0:
-                joint_probs = np.tile(self.start_mat.T[np.newaxis, :, :], (N, 1, 1))
-            else:
-                joint_probs = trans_mat_T[prev_state]
-
-            for child_batch, child_emit in output_pairs:
-                y_t = child_batch[:, t]
-                emit_slice = child_emit[:, :, y_t].transpose(2, 0, 1)
-                joint_probs *= emit_slice
-
-            flat_probs = joint_probs.reshape(N, -1)
-            normalize(flat_probs, axis=1)
-            if choose_max:
-                indices = np.argmax(flat_probs, axis=1)
-            else:
-                indices = np.array(
-                    [
-                        self.random_state.choice(flat_probs.shape[1], p=p)
-                        for p in flat_probs
-                    ]
-                )
-
-            input_token = indices // S
-            curr_state = indices % S
-
-            input_seq[:, t] = input_token
-            prev_state = curr_state
-
-        return input_seq
 
     def evaluate(self):
         self.accumulate_forward()
