@@ -7,11 +7,11 @@ from components.io_markov_node import IOMarkovNode
 
 @click.command()
 def main():
-    # train_iter = BatchIterator("data/io_processed_data/train.npy", batch_size=1024)
-    train_iter = BatchIterator("data/io_processed_data/valid.npy")
+    train_iter = BatchIterator("data/io_processed_data/train.npy", batch_size=1024)
+    # train_iter = BatchIterator("data/io_processed_data/valid.npy")
     valid_iter = BatchIterator("data/io_processed_data/valid.npy")
 
-    graph = MarkovGraph(n_epochs=10)
+    graph = MarkovGraph(n_epochs=100)
 
     # input_node = IOMarkovNode(graph, n_states=1, input_index=0)
     # prev_layer = []

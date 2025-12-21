@@ -24,12 +24,10 @@ class MarkovGraph(DiGraph):
                 if final_batch:
                     break
 
-            # self.evaluate(train_batch, train_lens, is_train=True)
             self.evaluate(valid_batch, valid_lens)
 
     def cumpute_learning_rate(self, it):
-        # return (1.0 + it)**(-0.7)
-        return (1.0 + it)**0
+        return (1.0 + it)**(-0.7)
 
     def training_loop(self, lr):
         self.backward(lr)
@@ -58,7 +56,9 @@ class MarkovGraph(DiGraph):
 
     def backward(self, lr=0):
         for node in reversed(self.order):
-            node.fit_batch(lr)
+            if node != self.order[0] and lr > 0:
+                node.fit_batch(lr)
+
             node.send_backward_messages()
 
     def forward(self, lr=0):
