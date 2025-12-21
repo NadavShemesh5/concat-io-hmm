@@ -7,6 +7,7 @@ from components.io_markov_node import IOMarkovNode
 
 @click.command()
 def main():
+    # train_iter = BatchIterator("data/io_processed_data/train.npy", batch_size=1024)
     train_iter = BatchIterator("data/io_processed_data/valid.npy")
     valid_iter = BatchIterator("data/io_processed_data/valid.npy")
 

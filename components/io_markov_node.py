@@ -38,7 +38,7 @@ class IOMarkovNode:
         self.batch_lengths = []
 
     @timing
-    def fit_batch(self):
+    def fit_batch(self, lr):
         self.accumulate_forward()
         stats = self.init_trans_optimizer()
         input_batch = self.forward_batches[0]
@@ -46,7 +46,7 @@ class IOMarkovNode:
             output_batch = self.backward_batches[0]
             stats = self.init_emit_optimizer(stats, 0)
             self.fit_tensor_batch(input_batch, output_batch, stats, 0)
-            self.optimize_emit(stats, 0)
+            self.optimize_emit(stats, 0, lr)
 
         for idx in range(len(self.children)):
             child = self.children[idx]
@@ -54,9 +54,9 @@ class IOMarkovNode:
             output_batch = self.backward_batches[batch_idx]
             stats = self.init_emit_optimizer(stats, idx)
             self.fit_tensor_batch(input_batch, output_batch, stats, idx)
-            self.optimize_emit(stats, idx)
+            self.optimize_emit(stats, idx, lr)
 
-        self.optimize_trans(stats)
+        self.optimize_trans(stats, lr)
 
     def init_trans_optimizer(self):
         stats = {
@@ -69,19 +69,23 @@ class IOMarkovNode:
         stats["emit"] = np.zeros_like(self.emit_mats[idx], dtype=np.float64)
         return stats
 
-    def optimize_trans(self, stats):
+    def optimize_trans(self, stats, lr):
         stats["start"] += self.start_prior
         normalize(stats["start"], axis=0)
-        self.start_mat = stats["start"].astype(np.float32)
+        self.start_mat = self.update_according_to_lr(self.start_mat, stats["start"], lr)
 
         stats["trans"] += self.trans_prior
         normalize(stats["trans"], axis=2)
-        self.trans_mat = stats["trans"].astype(np.float32)
+        self.trans_mat = self.update_according_to_lr(self.trans_mat, stats["trans"], lr)
 
-    def optimize_emit(self, stats, idx):
+    def optimize_emit(self, stats, idx, lr):
         stats["emit"] += self.emit_prior
         normalize(stats["emit"], axis=2)
-        self.emit_mats[idx] = stats["emit"].astype(np.float32)
+        self.emit_mats[idx] = self.update_according_to_lr(self.emit_mats[idx], stats["emit"], lr)
+
+    @staticmethod
+    def update_according_to_lr(old, new, lr):
+        return ((1 - lr) * old + lr * new).astype(np.float32)
 
     def fit_tensor_batch(self, input_seqs, output_seqs, stats, idx):
         total_log_prob, fwd, scaling = io_baum_welch.forward(

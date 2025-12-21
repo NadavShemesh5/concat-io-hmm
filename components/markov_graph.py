@@ -13,19 +13,27 @@ class MarkovGraph(DiGraph):
         # TODO: wrap n_epochs, training_loop scheduling and multi_sample in scheduler class
         self.init_graph(train.vocab_size)
         valid_batch, valid_lens, _ = next(validation)
+        it = 0
         for epoch in range(self.n_epochs):
+            print(f"Epoch {epoch + 1}/{self.n_epochs}")
             for train_batch, train_lens, final_batch in train:
                 self.feed_data(train_batch, train_lens)
-                self.training_loop()
+                lr = self.cumpute_learning_rate(it)
+                self.training_loop(lr)
+                it += 1
                 if final_batch:
                     break
 
             # self.evaluate(train_batch, train_lens, is_train=True)
             self.evaluate(valid_batch, valid_lens)
 
-    def training_loop(self):
-        self.backward()
-        self.forward()
+    def cumpute_learning_rate(self, it):
+        # return (1.0 + it)**(-0.7)
+        return (1.0 + it)**0
+
+    def training_loop(self, lr):
+        self.backward(lr)
+        self.forward(lr=lr)
 
     def feed_data(self, data, lengths):
         for node in self.nodes:
@@ -46,17 +54,17 @@ class MarkovGraph(DiGraph):
             output_data = data[:, node.output_index, :]
             node.backward_batches = [output_data]
 
-        self.forward(train=False)
+        self.forward()
 
-    def backward(self):
+    def backward(self, lr=0):
         for node in reversed(self.order):
-            node.fit_batch()
+            node.fit_batch(lr)
             node.send_backward_messages()
 
-    def forward(self, train=True):
+    def forward(self, lr=0):
         for node in self.order:
-            if train:
-                node.fit_batch()
+            if lr > 0:
+                node.fit_batch(lr)
 
             node.send_forward_messages()
 
