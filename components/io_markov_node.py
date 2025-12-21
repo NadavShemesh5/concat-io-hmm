@@ -1,14 +1,7 @@
 import numpy as np
 from sklearn.utils.validation import check_random_state
 
-from components.tools import (
-    normalize,
-    timing,
-    viterbi_backward,
-    viterbi_forward,
-    greedy_forward,
-    greedy_backward,
-)
+from components.tools import normalize, timing
 from algo import io_baum_welch
 
 
@@ -137,13 +130,12 @@ class IOMarkovNode:
         return posteriors
 
     @timing
-    def send_forward_messages(self, choose_max):
+    def send_forward_messages(self):
         self.accumulate_forward()
         input_batch = self.forward_batches[0]
         for child, emit in zip(self.children, self.emit_mats):
-            sample_func = viterbi_forward if choose_max else greedy_forward
-            forward_sample = sample_func(
-                input_batch, self.start_mat.T, self.trans_mat, emit
+            forward_sample = io_baum_welch.posterior_predict_output(
+                self.trans_mat, emit, self.start_mat.T, input_batch, self.batch_lengths
             )
             child.forward_batches.append(forward_sample)
 
@@ -151,7 +143,7 @@ class IOMarkovNode:
             self.backward_batches = []
 
     @timing
-    def send_backward_messages(self, choose_max):
+    def send_backward_messages(self):
         if not self.parents:
             return
 
@@ -166,12 +158,8 @@ class IOMarkovNode:
                 evidence_pairs.append((batch, emit))
 
         target_batch, emit_mat = evidence_pairs[0]
-        sample_func = viterbi_backward if choose_max else greedy_backward
-        backward_sample = sample_func(
-            target_batch,
-            self.start_mat.T,
-            self.trans_mat,
-            emit_mat
+        backward_sample = io_baum_welch.predict_inputs_marginal(
+            self.trans_mat, emit_mat, self.start_mat.T, target_batch, self.batch_lengths
         )
 
         dims = tuple([self.n_inputs] * len(self.parents))

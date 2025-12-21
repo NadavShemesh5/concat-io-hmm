@@ -46,4 +46,5 @@ class BatchIterator:
 
         batch = self.dataset[batch_idx, ...]
         lengths = np.sum(batch[:, 0, :] != self.pad_idx, axis=1)
-        return batch, lengths
+        final_batch = self.pos >= self.num_rows
+        return batch, lengths, final_batch
