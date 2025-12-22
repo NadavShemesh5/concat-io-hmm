@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.utils.validation import check_random_state
+from scipy.stats import mode
 
 from components.tools import normalize, timing
 from algo import io_baum_welch
@@ -39,7 +40,7 @@ class IOMarkovNode:
 
     @timing
     def fit_batch(self, lr):
-        self.accumulate_forward()
+        self.forward_batches = [self.accumulate_messages(self.forward_batches)]
         stats = self.init_trans_optimizer()
         input_batch = self.forward_batches[0]
         if not self.children:
@@ -85,7 +86,7 @@ class IOMarkovNode:
 
     @staticmethod
     def update_according_to_lr(old, new, lr):
-        return ((1 - lr) * old + lr * new).astype(np.float32)
+        return (1 - lr) * old + lr * new
 
     def fit_tensor_batch(self, input_seqs, output_seqs, stats, idx):
         total_log_prob, fwd, scaling = io_baum_welch.forward(
@@ -135,7 +136,7 @@ class IOMarkovNode:
 
     @timing
     def send_forward_messages(self):
-        self.accumulate_forward()
+        self.forward_batches = [self.accumulate_messages(self.forward_batches)]
         input_batch = self.forward_batches[0]
         for child, emit in zip(self.children, self.emit_mats):
             forward_sample = io_baum_welch.posterior_predict_output(
@@ -151,40 +152,41 @@ class IOMarkovNode:
         if not self.parents:
             return
 
-        evidence_pairs = []
+        backward_messages = []
         if not self.children:
             batch = self.backward_batches[0]
             emit = self.emit_mats[0]
-            evidence_pairs.append((batch, emit))
+            backward_msg = io_baum_welch.predict_inputs_marginal(
+                self.trans_mat, emit, self.start_mat.T, batch, self.batch_lengths
+            )
+            backward_messages.append(backward_msg)
         else:
             for child, batch in zip(self.parent_sending_order, self.backward_batches):
                 emit = self.emit_mats[self.children.index(child)]
-                evidence_pairs.append((batch, emit))
+                backward_msg = io_baum_welch.predict_inputs_marginal(
+                    self.trans_mat, emit, self.start_mat.T, batch, self.batch_lengths
+                )
+                backward_messages.append(backward_msg)
 
-        target_batch, emit_mat = evidence_pairs[0]
-        backward_sample = io_baum_welch.predict_inputs_marginal(
-            self.trans_mat, emit_mat, self.start_mat.T, target_batch, self.batch_lengths
-        )
-
-        dims = tuple([self.n_inputs] * len(self.parents))
-        unraveled_samples = np.unravel_index(backward_sample, dims)
+        accumulate_msg = self.accumulate_messages(backward_messages)
         for i, parent in enumerate(self.parents):
-            parent.backward_batches.append(unraveled_samples[i])
+            parent.backward_batches.append(accumulate_msg)
             parent.parent_sending_order.append(self)
 
         if self.parents:
             self.forward_batches = []
 
-    def accumulate_forward(self):
-        if len(self.forward_batches) == 1:
-            return
+    @staticmethod
+    def accumulate_messages(messages):
+        if len(messages) == 1:
+            return messages[0]
 
-        dims = tuple([self.n_inputs] * len(self.forward_batches))
-        combined_batch = np.ravel_multi_index(self.forward_batches, dims)
-        self.forward_batches = [combined_batch]
+        arr = np.stack(messages, axis=-1)
+        combined_batch = mode(arr, axis=-1, keepdims=False).mode
+        return combined_batch
 
     def evaluate(self):
-        self.accumulate_forward()
+        self.forward_batches = [self.accumulate_messages(self.forward_batches)]
         input_seqs = self.forward_batches[0]
         output_seqs = self.backward_batches[0]
         total_log_prob, _, _ = io_baum_welch.forward(
@@ -201,14 +203,13 @@ class IOMarkovNode:
         if self.is_initialized:
             return
 
-        input_dimension = int(np.prod([self.n_inputs for _ in range(len(self.parents))])) if self.parents else self.n_inputs
         init = 1.0 / self.n_states
-        self.trans_mat = self.random_state.dirichlet(np.full(self.n_states, init), size=(input_dimension, self.n_states)).astype(np.float32)
-        self.start_mat = self.random_state.dirichlet(np.full(self.n_states, init), size=input_dimension).T.astype(np.float32)
+        self.trans_mat = self.random_state.dirichlet(np.full(self.n_states, init), size=(self.n_inputs, self.n_states))
+        self.start_mat = self.random_state.dirichlet(np.full(self.n_states, init), size=self.n_inputs).T
 
         child_dimensions = [child.n_inputs for child in self.children] or [output_dimension]
         for dim in child_dimensions:
-            emit_mat = self.random_state.rand(input_dimension, self.n_states, dim).astype(np.float32)
+            emit_mat = self.random_state.rand(self.n_inputs, self.n_states, dim)
             normalize(emit_mat, axis=2)
             self.emit_mats.append(emit_mat)
 

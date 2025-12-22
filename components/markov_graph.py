@@ -10,7 +10,7 @@ class MarkovGraph(DiGraph):
         self.order = None
 
     def train(self, train, validation):
-        # TODO: wrap n_epochs, training_loop scheduling and multi_sample in scheduler class
+        # TODO: wrap n_epochs, training_loop and learning rate in scheduler class
         self.init_graph(train.vocab_size)
         valid_batch, valid_lens, _ = next(validation)
         it = 0
