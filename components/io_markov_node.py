@@ -18,6 +18,7 @@ class IOMarkovNode:
         random_state=1,
         input_index=-1,
         output_index=-1,
+        dropout_rate=0.0,
     ):
         self.graph = graph
         self.n_inputs = n_inputs
@@ -29,6 +30,7 @@ class IOMarkovNode:
         self.output_index = output_index
         self.random_state = check_random_state(random_state)
         self.is_initialized = False
+        self.dropout_rate = dropout_rate
 
         self.start_mat = None
         self.emit_mats = []
@@ -43,10 +45,11 @@ class IOMarkovNode:
         self.forward_batches = [self.accumulate_messages(self.forward_batches)]
         stats = self.init_trans_optimizer()
         input_batch = self.forward_batches[0]
+        log_prob = 0.0
         if not self.children:
             output_batch = self.backward_batches[0]
             stats = self.init_emit_optimizer(stats, 0)
-            self.fit_tensor_batch(input_batch, output_batch, stats, 0)
+            log_prob += self.fit_tensor_batch(input_batch, output_batch, stats, 0)
             self.optimize_emit(stats, 0, lr)
 
         for idx in range(len(self.children)):
@@ -54,10 +57,11 @@ class IOMarkovNode:
             batch_idx = self.parent_sending_order.index(child)
             output_batch = self.backward_batches[batch_idx]
             stats = self.init_emit_optimizer(stats, idx)
-            self.fit_tensor_batch(input_batch, output_batch, stats, idx)
+            log_prob += self.fit_tensor_batch(input_batch, output_batch, stats, idx)
             self.optimize_emit(stats, idx, lr)
 
         self.optimize_trans(stats, lr)
+        return log_prob
 
     def init_trans_optimizer(self):
         stats = {
@@ -89,9 +93,10 @@ class IOMarkovNode:
         return (1 - lr) * old + lr * new
 
     def fit_tensor_batch(self, input_seqs, output_seqs, stats, idx):
-        total_log_prob, fwd, scaling = io_baum_welch.forward(
+        emit = self.dropout_emit(self.emit_mats[idx])
+        log_prob, fwd, scaling = io_baum_welch.forward(
             self.trans_mat,
-            self.emit_mats[idx],
+            emit,
             self.start_mat,
             input_seqs,
             output_seqs,
@@ -99,7 +104,7 @@ class IOMarkovNode:
         )
         bwd = io_baum_welch.backward(
             self.trans_mat,
-            self.emit_mats[idx],
+            emit,
             scaling,
             input_seqs,
             output_seqs,
@@ -110,7 +115,7 @@ class IOMarkovNode:
             fwd,
             self.trans_mat,
             bwd,
-            self.emit_mats[idx],
+            emit,
             input_seqs,
             output_seqs,
             self.batch_lengths,
@@ -127,6 +132,7 @@ class IOMarkovNode:
         valid_out = output_seqs[mask]
         valid_post = posteriors[mask]
         np.add.at(stats["emit"].transpose(0, 2, 1), (valid_in, valid_out), valid_post)
+        return log_prob
 
     @staticmethod
     def compute_posteriors(fwd, bwd):
@@ -136,6 +142,9 @@ class IOMarkovNode:
 
     @timing
     def send_forward_messages(self):
+        if not self.children:
+            return
+
         self.forward_batches = [self.accumulate_messages(self.forward_batches)]
         input_batch = self.forward_batches[0]
         for child, emit in zip(self.children, self.emit_mats):
@@ -144,8 +153,7 @@ class IOMarkovNode:
             )
             child.forward_batches.append(forward_sample)
 
-        if self.children:
-            self.backward_batches = []
+        self.backward_batches = []
 
     @timing
     def send_backward_messages(self):
@@ -162,7 +170,7 @@ class IOMarkovNode:
             backward_messages.append(backward_msg)
         else:
             for child, batch in zip(self.parent_sending_order, self.backward_batches):
-                emit = self.emit_mats[self.children.index(child)]
+                emit = self.dropout_emit(self.emit_mats[self.children.index(child)])
                 backward_msg = io_baum_welch.predict_inputs_marginal(
                     self.trans_mat, emit, self.start_mat.T, batch, self.batch_lengths
                 )
@@ -173,8 +181,7 @@ class IOMarkovNode:
             parent.backward_batches.append(accumulate_msg)
             parent.parent_sending_order.append(self)
 
-        if self.parents:
-            self.forward_batches = []
+        self.forward_batches = []
 
     @staticmethod
     def accumulate_messages(messages):
@@ -185,11 +192,20 @@ class IOMarkovNode:
         combined_batch = mode(arr, axis=-1, keepdims=False).mode
         return combined_batch
 
+    def dropout_emit(self, emit_mat):
+        if self.dropout_rate == 0.0:
+            return emit_mat
+
+        mask = np.random.rand(*emit_mat.shape) > self.dropout_rate
+        dropout_mat = emit_mat * mask
+        normalize(dropout_mat, axis=2)
+        return dropout_mat
+
     def evaluate(self):
         self.forward_batches = [self.accumulate_messages(self.forward_batches)]
         input_seqs = self.forward_batches[0]
         output_seqs = self.backward_batches[0]
-        total_log_prob, _, _ = io_baum_welch.forward(
+        log_prob, _, _ = io_baum_welch.forward(
             self.trans_mat,
             self.emit_mats[0],
             self.start_mat,
@@ -197,7 +213,7 @@ class IOMarkovNode:
             output_seqs,
             self.batch_lengths,
         )
-        return total_log_prob
+        return log_prob
 
     def init_matrices(self, output_dimension=None):
         if self.is_initialized:

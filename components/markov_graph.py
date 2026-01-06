@@ -18,20 +18,24 @@ class MarkovGraph(DiGraph):
             print(f"Epoch {epoch + 1}/{self.n_epochs}")
             for train_batch, train_lens, final_batch in train:
                 self.feed_data(train_batch, train_lens)
-                lr = self.cumpute_learning_rate(it)
-                self.training_loop(lr)
+                lr = self.compute_learning_rate(it)
+                log_prob = self.training_loop(lr)
+                print("Curr Batch Perplexity:", np.exp(-log_prob / sum(train_lens)))
                 it += 1
+                if it % 5 == 0:
+                    self.evaluate(valid_batch, valid_lens)
                 if final_batch:
                     break
 
-            self.evaluate(valid_batch, valid_lens)
-
-    def cumpute_learning_rate(self, it):
+    @staticmethod
+    def compute_learning_rate(it):
         return (1.0 + it)**(-0.7)
+        # return 1
 
     def training_loop(self, lr):
         self.backward(lr)
-        self.forward(lr=lr)
+        log_prob = self.forward(lr=lr)
+        return log_prob
 
     def feed_data(self, data, lengths):
         for node in self.nodes:
@@ -62,17 +66,20 @@ class MarkovGraph(DiGraph):
             node.send_backward_messages()
 
     def forward(self, lr=0):
+        log_prob = None
         for node in self.order:
             if lr > 0:
-                node.fit_batch(lr)
+                log_prob = node.fit_batch(lr)
 
             node.send_forward_messages()
 
+        return log_prob
+
     def evaluate(self, batch, lengths, is_train=False):
         self.feed_data(batch, lengths)
-        log_loss = self.order[-1].evaluate()
+        log_prob = self.order[-1].evaluate()
         dataset = "Train" if is_train else "Validation"
-        print(f"{dataset} Perplexity:", np.exp(-log_loss / sum(lengths)))
+        print(f"{dataset} Perplexity:", np.exp(-log_prob / sum(lengths)))
 
     def init_graph(self, vocab_size):
         for node in self.nodes:
