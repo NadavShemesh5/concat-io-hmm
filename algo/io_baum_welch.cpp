@@ -292,8 +292,6 @@ py::array_t<int> posterior_predict_output(
     // Pre-allocate buffers for Forward-Backward
     std::vector<std::vector<double>> alpha(T_max, std::vector<double>(S));
     std::vector<double> scaling(T_max);
-    std::vector<double> beta(S);
-    std::vector<double> next_beta(S);
 
     py::gil_scoped_release nogil;
 
@@ -338,9 +336,6 @@ py::array_t<int> posterior_predict_output(
 
         // --- 2. Backward Pass + Decoding ---
 
-        // Initialize Beta at T-1
-        std::fill(beta.begin(), beta.end(), scaling[T_n - 1]);
-
         for (ssize_t t = T_n - 1; t >= 0; --t) {
             auto u_t = inputs(n, t);
 
@@ -350,7 +345,7 @@ py::array_t<int> posterior_predict_output(
             int best_state = 0;
 
             for (ssize_t i = 0; i < S; ++i) {
-                double gamma_val = alpha[t][i] * beta[i];
+                double gamma_val = alpha[t][i];
                 if (gamma_val > max_gamma_val) {
                     max_gamma_val = gamma_val;
                     best_state = i;
@@ -369,19 +364,6 @@ py::array_t<int> posterior_predict_output(
                 }
             }
             output_seq(n, t) = best_out;
-
-            // C. Update Beta for next step (t-1)
-            if (t > 0) {
-                std::fill(next_beta.begin(), next_beta.end(), 0.0);
-                for (ssize_t i = 0; i < S; ++i) { // S_{t-1}
-                    double acc = 0.0;
-                    for (ssize_t j = 0; j < S; ++j) { // S_t
-                        acc += trans_mat(u_t, i, j) * beta[j];
-                    }
-                    next_beta[i] = acc * scaling[t - 1];
-                }
-                beta = next_beta;
-            }
         }
     }
 
