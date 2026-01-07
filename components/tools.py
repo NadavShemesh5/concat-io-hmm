@@ -1,7 +1,11 @@
 import numpy as np
-from sklearn.cluster import SpectralBiclustering
 from functools import wraps
 from time import time
+from numba import njit, prange
+from algo import io_baum_welch
+
+EPS = 1e-12
+LOG_EPS = -100.0
 
 
 def normalize(a, axis=None):
@@ -25,4 +29,5 @@ def timing(f):
         print('func:%r took: %2.4f sec' % \
           (f.__name__, te-ts))
         return result
+
     return wrap

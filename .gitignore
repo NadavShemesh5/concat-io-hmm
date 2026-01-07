@@ -14,6 +14,7 @@ htmlcov/
 oprofile_data/
 raw_data/
 processed_data/
+io_processed_data/
 .coverage
 .coverage.*
 .gdb_history
